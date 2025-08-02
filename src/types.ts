@@ -150,6 +150,5 @@ export interface SystemState {
   completedRequests: ElevatorRequest[];
   /** Current performance statistics */
   stats: SimulationStats;
-  /** History of all events that have occurred */
-  logs: LogEntry[];
+  // logs: LogEntry[]; // Removed - logs are now sent via separate new_log events
 }

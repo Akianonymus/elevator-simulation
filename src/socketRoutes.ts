@@ -11,6 +11,7 @@ export function createSocketRoutes(
 
     // Send initial system state to new client
     socket.emit("system_state", elevatorSystem.getSystemState());
+    io.emit("logs", elevatorSystem.getLogs());
 
     socket.on("start_simulation", () => {
       try {
@@ -244,11 +245,10 @@ export function createSocketRoutes(
       }
     });
 
-    // Get logs (equivalent to GET /logs)
     socket.on("get_logs", (data?: { elevatorId?: number; limit?: number }) => {
       try {
         const elevatorId = data?.elevatorId;
-        const limit = data?.limit || 50;
+        const limit = data?.limit || 5000;
 
         if (
           elevatorId !== undefined &&
@@ -270,10 +270,7 @@ export function createSocketRoutes(
         }
 
         const logs = elevatorSystem.getLogs(elevatorId, limit);
-        socket.emit("logs_response", {
-          success: true,
-          data: logs,
-        });
+        socket.emit("logs", logs);
       } catch (error) {
         socket.emit("error", {
           success: false,
@@ -283,7 +280,6 @@ export function createSocketRoutes(
       }
     });
 
-    // Get stats (equivalent to GET /stats)
     socket.on("get_stats", () => {
       try {
         const stats = elevatorSystem.getStats();

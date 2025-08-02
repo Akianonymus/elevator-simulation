@@ -534,17 +534,17 @@ export class ElevatorSystem {
     for (const request of pickingUp) {
       // Check if elevator has capacity
       if (elevator.currentLoad >= elevator.capacity) {
-        this.log(
-          "elevator_full",
-          `Elevator ${elevator.id} is at capacity, cannot pick up passenger ${request.id}`,
-          {
-            requestId: request.id,
-            floor: currentFloor,
-            currentLoad: elevator.currentLoad,
-            capacity: elevator.capacity,
-          },
-          elevator.id
-        );
+        // this.log(
+        //   "elevator_full",
+        //   `Elevator ${elevator.id} is at capacity, cannot pick up passenger ${request.id}`,
+        //   {
+        //     requestId: request.id,
+        //     floor: currentFloor,
+        //     currentLoad: elevator.currentLoad,
+        //     capacity: elevator.capacity,
+        //   },
+        //   elevator.id
+        // );
         continue;
       }
 
@@ -968,23 +968,24 @@ export class ElevatorSystem {
     // This includes both unassigned requests and assigned requests that haven't been picked up yet
     const waitingRequests = Array.from(this.pendingRequests.values()).filter(
       (request) => {
-        // If request is unassigned, it's available
+        // If request is unassigned, it's waiting for assignment
         if (request.assignedElevator === undefined) {
           return true;
         }
 
-        // If request is assigned, check if the assigned elevator is moving
+        // If request is assigned, check if the assigned elevator exists
         const assignedElevator = this.elevators[request.assignedElevator];
         if (!assignedElevator) {
-          return true; // If assigned elevator doesn't exist, consider it available
+          return true; // If assigned elevator doesn't exist, consider it waiting
         }
 
-        // only reassign requests which are not inside a moving elavator
+        // Exclude requests that are currently being transported (in moving elevator)
         if (assignedElevator.movingRequests.some((v) => v.id === request.id)) {
           return false;
         }
 
-        return false;
+        // Include all other assigned requests (waiting to be picked up)
+        return true;
       }
     );
     const pendingWaitTimes = waitingRequests.map(
@@ -1044,7 +1045,7 @@ export class ElevatorSystem {
       pendingRequests: Array.from(this.pendingRequests.values()),
       completedRequests: Array.from(this.completedRequests.values()),
       stats: this.getStats(),
-      logs: this.getLogs(undefined, 1000),
+      // logs: this.getLogs(undefined, 1000), // Removed - logs are now sent via separate new_log events
     };
   }
 
@@ -1098,12 +1099,12 @@ export class ElevatorSystem {
     // Add the new log entry
     this.logs.set(key, logEntry);
     this.logCount++;
+
+    // Emit the new log entry to all connected clients
+    this.io.emit("new_log", logEntry);
   }
 
-  public getLogs(
-    elevatorId?: number,
-    limit: number = this.MAX_LOG_ENTRIES
-  ): LogEntry[] {
+  public getLogs(elevatorId?: number, limit: number = 1000): LogEntry[] {
     // Convert map to array and sort by timestamp
     const logsArray = Array.from(this.logs.values()).sort(
       (a, b) => a.timestamp - b.timestamp
