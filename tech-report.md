@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This report details the implementation of a real-time elevator simulation system designed to optimize passenger experience through intelligent scheduling algorithms. The system successfully handles dynamic passenger requests while maintaining efficient elevator utilization and preventing request starvation. The latest implementation includes advanced features such as smart request reassignment, wait time optimization, and enhanced priority-based processing.
+This report details the implementation of a real-time elevator simulation system designed to optimize passenger experience through intelligent scheduling algorithms. The system successfully handles dynamic passenger requests while maintaining efficient elevator utilization and preventing request starvation. The implementation includes advanced features such as smart request reassignment, wait time optimization, and enhanced priority-based processing.
 
 ## Algorithm Design & Implementation
 
@@ -13,7 +13,7 @@ The system implements a sophisticated fitness-based scheduling algorithm that co
 **Key Components:**
 
 1. **Enhanced Fitness Score Calculation:**
-   The algorithm now considers:
+   The algorithm considers:
 
    - **Distance**: Physical distance between elevator and request origin
    - **Estimated Wait Time**: Calculated based on elevator's current path and intermediate stops
@@ -183,7 +183,8 @@ The codebase is organized into clear, focused modules:
 
 - `ElevatorSystem`: Core simulation logic with enhanced algorithms
 - `socketRoutes`: Real-time communication handling
-- `types`: Comprehensive TypeScript definitions including new reassignment tracking
+- `types`: Comprehensive TypeScript definitions including reassignment tracking
+- `index`: Main server setup and configuration
 
 ### Documentation
 
