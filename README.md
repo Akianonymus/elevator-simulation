@@ -1,5 +1,7 @@
 # Elevator System Simulation & Optimization
 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5a74b91d-3c2a-4142-80a3-67c0d28d135d" />
+
 A web-based elevator simulation system with intelligent scheduling algorithms that efficiently handle passenger requests while prioritizing user experience. This frontend application provides real-time visualization and control of a multi-elevator system serving multiple floors.
 
 ## Features Implemented
