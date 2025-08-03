@@ -20,8 +20,39 @@ import {
   Activity,
   ArrowUpDown,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+// Custom debounce hook
+function useDebounce<T extends (...args: any[]) => void>(
+  callback: T,
+  delay: number
+): T {
+  const [timeoutId, setTimeoutId] = useState<NodeJS.Timeout | null>(null);
+
+  const debouncedCallback = useCallback(
+    (...args: Parameters<T>) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      const newTimeoutId = setTimeout(() => {
+        callback(...args);
+      }, delay);
+      setTimeoutId(newTimeoutId);
+    },
+    [callback, delay, timeoutId]
+  ) as T;
+
+  useEffect(() => {
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [timeoutId]);
+
+  return debouncedCallback;
+}
 
 interface SimulationControlsProps {
   actions: any;
@@ -60,6 +91,9 @@ export function SimulationControls({
       actions.updateConfig({ ...config, [key]: value });
     }
   };
+
+  // Debounced config change handler
+  const debouncedConfigChange = useDebounce(handleConfigChange, 100);
 
   const handleStart = async () => {
     setIsLoading(true);
@@ -187,9 +221,9 @@ export function SimulationControls({
                 Speed: {config.simulationSpeed}x
               </Label>
               <Slider
-                value={[config.simulationSpeed]}
+                defaultValue={[config.simulationSpeed]}
                 onValueChange={([value]) =>
-                  handleConfigChange("simulationSpeed", value)
+                  debouncedConfigChange("simulationSpeed", value)
                 }
                 min={1}
                 max={10}
@@ -204,9 +238,9 @@ export function SimulationControls({
                 Elevators: {config.numberOfElevators}
               </Label>
               <Slider
-                value={[config.numberOfElevators]}
+                defaultValue={[config.numberOfElevators]}
                 onValueChange={([value]) =>
-                  handleConfigChange("numberOfElevators", value)
+                  debouncedConfigChange("numberOfElevators", value)
                 }
                 min={1}
                 max={6}
@@ -221,9 +255,9 @@ export function SimulationControls({
                 Floors: {config.numberOfFloors}
               </Label>
               <Slider
-                value={[config.numberOfFloors]}
+                defaultValue={[config.numberOfFloors]}
                 onValueChange={([value]) =>
-                  handleConfigChange("numberOfFloors", value)
+                  debouncedConfigChange("numberOfFloors", value)
                 }
                 min={5}
                 max={10}
@@ -238,9 +272,9 @@ export function SimulationControls({
                 Capacity: {config.elevatorCapacity}
               </Label>
               <Slider
-                value={[config.elevatorCapacity]}
+                defaultValue={[config.elevatorCapacity]}
                 onValueChange={([value]) =>
-                  handleConfigChange("elevatorCapacity", value)
+                  debouncedConfigChange("elevatorCapacity", value)
                 }
                 min={4}
                 max={16}
@@ -255,9 +289,9 @@ export function SimulationControls({
                 Rate: {config.requestFrequency} per min
               </Label>
               <Slider
-                value={[config.requestFrequency]}
+                defaultValue={[config.requestFrequency]}
                 onValueChange={([value]) =>
-                  handleConfigChange("requestFrequency", value)
+                  debouncedConfigChange("requestFrequency", value)
                 }
                 min={1}
                 max={100}

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import {
   useElevatorSystem,
   useSystemState,
@@ -12,23 +11,16 @@ import { SimulationLogs } from "@/components/simulation/SimulationLogs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Wifi, WifiOff, AlertCircle } from "lucide-react";
-import { useElevatorStore } from "@/store/elevatorStore";
-import { stat } from "fs";
+import { AlertCircle } from "lucide-react";
 
 export default function Home() {
   const actions = useElevatorSystem();
   const systemState = useSystemState();
   const { isConnected, error } = useConnectionStatus();
-  const stats = useElevatorStore((state) => state.stats);
 
-  useEffect(() => {
-    // Auto-connect when component mounts
-    actions.getStats();
-    actions.getLogs();
-  }, []);
+  const avgWaitTimeSeconds =
+    (systemState && systemState?.stats.maxWaitTime / 1000) || 0;
 
-  const avgWaitTimeSeconds = (stats && stats?.maxWaitTime / 1000) || 0;
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -84,8 +76,12 @@ export default function Home() {
                 )}
               </div>
               <div>
-                <div>Total Requests: {stats?.totalRequests || 0}</div>
-                <div>Completed: {stats?.completedRequests || 0}</div>
+                <div>
+                  Total Requests: {systemState?.stats.totalRequests || 0}
+                </div>
+                <div>
+                  Completed: {systemState?.stats.completedRequests || 0}
+                </div>
               </div>
               <div>Max Wait Time: {avgWaitTimeSeconds}s</div>
             </CardHeader>

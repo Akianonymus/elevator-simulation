@@ -11,10 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { X } from "lucide-react";
+import { X, Eye, EyeOff } from "lucide-react";
 import { format } from "date-fns";
-import { useEffect, useState, useMemo, useCallback, memo } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useState, useMemo, useCallback, memo } from "react";
 
 // Memoized color mapping to avoid recalculations
 const EVENT_COLORS = {
@@ -88,52 +87,6 @@ const LogEntry = memo(({ log, index }: { log: any; index: number }) => {
 
 LogEntry.displayName = "LogEntry";
 
-// Virtual scrolling component for large log lists
-const VirtualizedLogList = memo(({ logs }: { logs: any[] }) => {
-  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 50 });
-  const itemHeight = 80; // Estimated height of each log entry
-  const containerHeight = 70 * 16; // 70vh in pixels (assuming 16px = 1rem)
-  const visibleCount = Math.ceil(containerHeight / itemHeight) + 5; // Buffer
-
-  const handleScroll = useCallback(
-    (event: any) => {
-      const scrollTop = event.target.scrollTop;
-      const start = Math.floor(scrollTop / itemHeight);
-      const end = Math.min(start + visibleCount, logs.length);
-      setVisibleRange({ start, end });
-    },
-    [logs.length, visibleCount, itemHeight]
-  );
-
-  const visibleLogs = logs.slice(visibleRange.start, visibleRange.end);
-  const totalHeight = logs.length * itemHeight;
-  const offsetY = visibleRange.start * itemHeight;
-
-  return (
-    <div
-      className="relative"
-      style={{ height: `${containerHeight}px`, overflow: "auto" }}
-      onScroll={handleScroll}
-    >
-      <div style={{ height: `${totalHeight}px`, position: "relative" }}>
-        <div style={{ transform: `translateY(${offsetY}px)` }}>
-          {visibleLogs.map((log, index) => (
-            <LogEntry
-              key={`${log.timestamp}-${log.event}-${
-                log.elevatorId || "system"
-              }-${visibleRange.start + index}`}
-              log={log}
-              index={visibleRange.start + index}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-});
-
-VirtualizedLogList.displayName = "VirtualizedLogList";
-
 // Memoized filter controls component
 const FilterControls = memo(
   ({
@@ -145,6 +98,10 @@ const FilterControls = memo(
     elevatorIds,
     hasActiveFilters,
     clearFilters,
+    showAllLogs,
+    setShowAllLogs,
+    totalLogs,
+    displayedLogs,
   }: {
     eventTypeFilter: string;
     setEventTypeFilter: (value: string) => void;
@@ -154,9 +111,13 @@ const FilterControls = memo(
     elevatorIds: (number | undefined)[];
     hasActiveFilters: boolean;
     clearFilters: () => void;
+    showAllLogs: boolean;
+    setShowAllLogs: (value: boolean) => void;
+    totalLogs: number;
+    displayedLogs: number;
   }) => {
     return (
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
         <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
           <SelectTrigger className="h-8">
             <SelectValue placeholder="Event" />
@@ -195,6 +156,30 @@ const FilterControls = memo(
             <X className="h-4 w-4" />
           </Button>
         )}
+
+        <div className="flex items-center gap-2 ml-auto">
+          <span className="text-xs text-muted-foreground">
+            Showing {displayedLogs} of {totalLogs} logs
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAllLogs(!showAllLogs)}
+            className="h-8"
+          >
+            {showAllLogs ? (
+              <>
+                <EyeOff className="h-4 w-4 mr-1" />
+                Show Recent
+              </>
+            ) : (
+              <>
+                <Eye className="h-4 w-4 mr-1" />
+                Show All
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -204,11 +189,12 @@ FilterControls.displayName = "FilterControls";
 
 export function SimulationLogs() {
   // Use shallow comparison to prevent unnecessary re-renders
-  const logs = useElevatorStore(useShallow((state) => state.logs));
+  const logs = useElevatorStore((state) => state.logs);
 
   // Filter states
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all");
   const [elevatorFilter, setElevatorFilter] = useState<string>("all");
+  const [showAllLogs, setShowAllLogs] = useState<boolean>(false);
 
   // Memoized filter options with stable references
   const { eventTypes, elevatorIds } = useMemo(() => {
@@ -223,15 +209,14 @@ export function SimulationLogs() {
 
   // Optimized filtering with early returns and reduced iterations
   const filteredLogs = useMemo(() => {
-    if (eventTypeFilter === "all" && elevatorFilter === "all") {
-      return logs.slice().reverse();
-    }
+    let filtered = logs;
 
-    const elevatorIdFilter =
-      elevatorFilter !== "all" ? parseInt(elevatorFilter) : null;
+    // Apply filters
+    if (eventTypeFilter !== "all" || elevatorFilter !== "all") {
+      const elevatorIdFilter =
+        elevatorFilter !== "all" ? parseInt(elevatorFilter) : null;
 
-    return logs
-      .filter((log) => {
+      filtered = logs.filter((log) => {
         if (eventTypeFilter !== "all" && log.event !== eventTypeFilter) {
           return false;
         }
@@ -239,9 +224,19 @@ export function SimulationLogs() {
           return false;
         }
         return true;
-      })
-      .reverse();
-  }, [logs, eventTypeFilter, elevatorFilter]);
+      });
+    }
+
+    // Reverse to show newest first
+    filtered = filtered.slice().reverse();
+
+    // Apply log limit based on showAllLogs state
+    if (!showAllLogs) {
+      filtered = filtered.slice(0, 100);
+    }
+
+    return filtered;
+  }, [logs, eventTypeFilter, elevatorFilter, showAllLogs]);
 
   // Memoized callback for clearing filters
   const clearFilters = useCallback(() => {
@@ -251,9 +246,6 @@ export function SimulationLogs() {
 
   const hasActiveFilters =
     eventTypeFilter !== "all" || elevatorFilter !== "all";
-
-  // Use virtualization for large lists (more than 100 items)
-  const shouldUseVirtualization = filteredLogs.length > 100;
 
   return (
     <div className="space-y-3">
@@ -266,6 +258,10 @@ export function SimulationLogs() {
         elevatorIds={elevatorIds}
         hasActiveFilters={hasActiveFilters}
         clearFilters={clearFilters}
+        showAllLogs={showAllLogs}
+        setShowAllLogs={setShowAllLogs}
+        totalLogs={logs.length}
+        displayedLogs={filteredLogs.length}
       />
 
       {filteredLogs.length === 0 ? (
@@ -274,8 +270,6 @@ export function SimulationLogs() {
             ? "No logs yet. Start the simulation or make a manual request from floor controls to see activity."
             : "No logs match the current filters. Try adjusting your filter criteria."}
         </div>
-      ) : shouldUseVirtualization ? (
-        <VirtualizedLogList logs={filteredLogs} />
       ) : (
         <ScrollArea className="h-[70vh]">
           <div className="flex flex-col space-y-2 p-1">

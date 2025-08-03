@@ -90,7 +90,7 @@ const ElevatorShaft = memo(
 
           {/* Elevator */}
           <div
-            className={`absolute h-10 w-24 ${elevatorColor} rounded border-2 border-white dark:border-slate-800 shadow-lg transition-all duration-1000 ease-in-out flex items-center justify-center text-white font-bold text-xs`}
+            className={`absolute h-10 w-24 ${elevatorColor} rounded border-2 border-white dark:border-slate-800 shadow-lg transition-all duration-100 flex items-center justify-center text-white font-bold text-xs`}
             style={elevatorPosition}
           >
             {directionIcon}

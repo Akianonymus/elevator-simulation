@@ -4,30 +4,19 @@ import { useElevatorStore } from "@/store/elevatorStore";
 import {
   SystemState,
   SimulationConfig,
-  ElevatorRequest,
   LogEntry,
   SimulationStats,
-  ElevatorState,
 } from "@/lib/types";
 import { useShallow } from "zustand/react/shallow";
 
 const SOCKET_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-// Debounce utility function
-const debounce = <T extends (...args: any[]) => any>(
-  func: T,
-  wait: number
-): ((...args: Parameters<T>) => void) => {
-  let timeout: NodeJS.Timeout;
-  return (...args: Parameters<T>) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func(...args), wait);
-  };
-};
-
 export const useElevatorSystem = () => {
-  const socketRef = useRef<any>(null);
+  const socketRef = useRef<SocketIOClient.Socket | null>(null);
+  const logBufferRef = useRef<LogEntry[]>([]);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const {
     setSystemState,
     setConnectionStatus,
@@ -37,59 +26,71 @@ export const useElevatorSystem = () => {
     updateLogs,
   } = useElevatorStore();
 
-  // Debounced state updates to prevent rapid re-renders
-  const debouncedSetSystemState = useCallback(
-    debounce((state: SystemState) => {
-      setSystemState(state);
-    }, 16), // ~60fps
-    [setSystemState]
-  );
+  // Function to flush buffered logs
+  const flushLogBuffer = useCallback(() => {
+    if (logBufferRef.current.length > 0) {
+      // Add all buffered logs to the store
+      logBufferRef.current.forEach((log) => {
+        updateLogs(log);
+      });
+      // Clear the buffer
+      logBufferRef.current = [];
+    }
+    updateTimeoutRef.current = null;
+  }, [updateLogs]);
+
+  // Function to schedule log updates
+  const scheduleLogUpdate = useCallback(() => {
+    if (updateTimeoutRef.current === null) {
+      updateTimeoutRef.current = setTimeout(flushLogBuffer, 200);
+    }
+  }, [flushLogBuffer]);
 
   useEffect(() => {
-    // Initialize socket connection
-    const socket = io(SOCKET_URL, {
-      timeout: 5000,
-      transports: ["websocket", "polling"],
-    });
-
-    socketRef.current = socket;
-
-    socket.emit("get_logs");
+    if (!socketRef.current) {
+      socketRef.current = io(SOCKET_URL, {
+        timeout: 10000,
+        transports: ["websocket", "polling"],
+      });
+    }
 
     // Connection events
-    socket.on("connect", () => {
+    socketRef.current.on("connect", () => {
       setConnectionStatus(true);
       setError(null);
     });
 
-    socket.on("disconnect", () => {
+    socketRef.current.on("disconnect", () => {
       setConnectionStatus(false);
     });
 
-    socket.on("connect_error", (error: Error) => {
+    socketRef.current.on("connect_error", (error: Error) => {
       setConnectionStatus(false);
       setError(`Connection failed: ${error.message}`);
     });
 
     // System events with debounced updates
-    socket.on("system_state", (systemState: SystemState) => {
-      debouncedSetSystemState(systemState);
+    socketRef.current.on("system_state", (systemState: SystemState) => {
+      setSystemState(systemState);
     });
 
-    socket.on("logs", (logs: LogEntry[]) => {
+    socketRef.current.on("logs", (logs: LogEntry[]) => {
       setLogs(logs);
     });
 
-    socket.on("new_log", (log: LogEntry) => {
-      updateLogs(log);
+    socketRef.current.on("new_log", (log: LogEntry) => {
+      // Buffer the log instead of immediately updating
+      logBufferRef.current.push(log);
+      // Schedule an update if not already scheduled
+      scheduleLogUpdate();
     });
 
-    socket.on("stats", (stats: SimulationStats) => {
+    socketRef.current.on("stats", (stats: SimulationStats) => {
       setStats(stats);
     });
 
     // Error handling
-    socket.on(
+    socketRef.current.on(
       "error",
       (error: { success: boolean; error: string; details?: string }) => {
         setError(error.error + (error.details ? `: ${error.details}` : ""));
@@ -97,14 +98,20 @@ export const useElevatorSystem = () => {
     );
 
     return () => {
-      socket.disconnect();
+      // Clear any pending timeout and flush remaining logs
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+        flushLogBuffer();
+      }
+      socketRef.current?.disconnect();
     };
   }, [
-    debouncedSetSystemState,
     setConnectionStatus,
     setError,
     setLogs,
     setStats,
+    scheduleLogUpdate,
+    flushLogBuffer,
   ]);
 
   // Action functions that emit to socket
