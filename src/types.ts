@@ -17,6 +17,10 @@ export interface ElevatorRequest {
   assignedElevator?: number;
   /** When the request was completed (Unix timestamp) */
   completedAt?: number;
+  /** When this request was last reassigned (Unix timestamp) - prevents thrashing */
+  reassignedAt?: number;
+  /** Cached estimated wait time for this request (in milliseconds) */
+  estimatedWaitTime?: number;
 }
 
 /**

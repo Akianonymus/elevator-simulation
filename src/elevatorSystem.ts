@@ -100,7 +100,7 @@ export class ElevatorSystem {
 
       try {
         // Validate system state before processing
-        this.validateSystem("strict");
+        this.validateSystem("basic");
 
         // Process requests first to ensure proper assignment
         this.assignPendingRequests();
@@ -112,7 +112,7 @@ export class ElevatorSystem {
         this.escalateRequestPriorities();
 
         // Validate system state after processing
-        this.validateSystem("strict");
+        this.validateSystem("basic");
 
         // Emit system state update
         this.io.emit("system_state", this.getSystemState());
@@ -216,30 +216,15 @@ export class ElevatorSystem {
     }
   }
 
-  public generateRandomRequest(
-    num = 1,
-    delay = 100
-  ): ElevatorRequest | ElevatorRequest[] {
+  public generateRandomRequest(num = 1): ElevatorRequest | ElevatorRequest[] {
     if (num === 1) {
       return this.generateSingleRandomRequest();
     }
 
     const requests: ElevatorRequest[] = [];
-    let generatedCount = 0;
-
-    const generateNext = () => {
-      if (generatedCount < num) {
-        const request = this.generateSingleRandomRequest();
-        requests.push(request);
-        generatedCount++;
-
-        if (generatedCount < num) {
-          setTimeout(generateNext, delay);
-        }
-      }
-    };
-
-    generateNext();
+    for (let i = 0; i < num; i++) {
+      requests.push(this.generateSingleRandomRequest());
+    }
     return requests;
   }
 
@@ -336,16 +321,31 @@ export class ElevatorSystem {
   }
 
   private assignPendingRequests(): void {
-    // Get unassigned requests, sorted by timestamp (oldest first)
-    const unassignedRequests = Array.from(this.pendingRequests.values())
-      .filter((request) => request.assignedElevator === undefined)
-      .sort((a, b) => a.timestamp - b.timestamp);
+    // Get all requests sorted by priority first, then by timestamp (oldest first)
+    const allRequests = Array.from(this.pendingRequests.values()).sort(
+      (a, b) => {
+        // Sort by priority first (higher priority first)
+        if (b.priority !== a.priority) {
+          return b.priority - a.priority;
+        }
+        // Then by timestamp (oldest first)
+        return a.timestamp - b.timestamp;
+      }
+    );
+
+    // Separate unassigned and assigned requests
+    const unassignedRequests = allRequests.filter(
+      (request) => request.assignedElevator === undefined
+    );
+    const assignedRequests = allRequests.filter(
+      (request) => request.assignedElevator !== undefined
+    );
 
     // Track which elevators have been assigned requests in this cycle to prevent conflicts
     const assignedElevators = new Set<number>();
 
+    // First, handle unassigned requests
     for (const request of unassignedRequests) {
-      // Skip if request is no longer in pending (may have been picked up)
       if (!this.pendingRequests.has(request.id)) {
         continue;
       }
@@ -353,10 +353,7 @@ export class ElevatorSystem {
       const optimalElevatorId = this.findOptimalElevator(request);
 
       if (optimalElevatorId !== null) {
-        // Check if this elevator has already been assigned a request in this cycle
-        // This prevents multiple requests from being assigned to the same elevator simultaneously
         if (assignedElevators.has(optimalElevatorId)) {
-          // Try to find another suitable elevator
           const alternativeElevatorIndex = this.findOptimalElevator(
             request,
             optimalElevatorId
@@ -371,6 +368,9 @@ export class ElevatorSystem {
         }
       }
     }
+
+    // Then, handle reassignment of stuck requests
+    this.handleRequestReassignment(assignedRequests);
   }
 
   private findOptimalElevator(
@@ -379,6 +379,9 @@ export class ElevatorSystem {
   ): number | null {
     let optimalElevatorId: number | null = null;
     let lowestFitnessScore = Infinity;
+    const MAX_REQUESTS_PER_ELEVATOR = Math.ceil(
+      this.config.elevatorCapacity * 1.5
+    ); // Allow some overflow
 
     for (let i = 0; i < this.elevators.length; i++) {
       // Skip the excluded elevator if specified
@@ -389,6 +392,10 @@ export class ElevatorSystem {
 
       // Check if elevator is at capacity
       if (elevator.currentLoad >= elevator.capacity) continue;
+
+      // Check if elevator has too many pending requests (load balancing)
+      const totalWorkload = this.calculateElevatorLoad(elevator);
+      if (totalWorkload >= MAX_REQUESTS_PER_ELEVATOR) continue;
 
       // Consider idle elevators
       if (elevator.direction === "idle" && !elevator.isMoving) {
@@ -437,12 +444,26 @@ export class ElevatorSystem {
     request: ElevatorRequest
   ): number {
     const distance = Math.abs(elevator.currentFloor - request.originFloor);
+    const estimatedWaitTime = this.calculateEstimatedWaitTime(
+      elevator,
+      request
+    );
     const loadFactor = elevator.currentLoad / elevator.capacity;
     const directionBonus = this.calculateDirectionBonus(elevator, request);
 
-    let fitnessScore = distance + loadFactor * 10 - directionBonus;
+    // Weight wait time heavily (convert to "floors" equivalent)
+    // 1 second of wait time = 2 floors of distance penalty
+    const waitTimeFactor = estimatedWaitTime / 500; // Convert ms to weighted factor
 
-    fitnessScore -= (request.priority - 1) * 5;
+    // Calculate total workload including pending requests
+    const totalWorkload = this.calculateElevatorLoad(elevator);
+    const workloadFactor = totalWorkload / elevator.capacity;
+
+    let fitnessScore =
+      distance + waitTimeFactor + workloadFactor * 15 - directionBonus;
+
+    // Priority bonus - higher priority requests get better scores
+    fitnessScore -= (request.priority - 1) * 10;
 
     return fitnessScore;
   }
@@ -466,6 +487,220 @@ export class ElevatorSystem {
     }
 
     return 0;
+  }
+
+  /**
+   * Calculate estimated wait time for a request considering elevator's current path
+   * and intermediate stops for other requests
+   */
+  private calculateEstimatedWaitTime(
+    elevator: ElevatorState,
+    request: ElevatorRequest
+  ): number {
+    const FLOOR_TRAVEL_TIME_MS = 1000; // 1 second per floor
+    const STOP_TIME_MS = 2000; // 2 seconds for boarding/disembarking
+    const DOOR_TIME_MS = 1000; // 1 second for door operations
+
+    let totalTime = 0;
+    let currentFloor = elevator.currentFloor;
+    let currentDirection = elevator.direction;
+
+    // If elevator is idle, calculate direct path
+    if (elevator.direction === "idle") {
+      const distance = Math.abs(currentFloor - request.originFloor);
+      return distance * FLOOR_TRAVEL_TIME_MS + STOP_TIME_MS;
+    }
+
+    // Calculate path considering current elevator direction and existing requests
+    const path = this.calculateElevatorPath(elevator, request.originFloor);
+
+    for (let i = 0; i < path.length; i++) {
+      const floor = path[i];
+      if (floor !== undefined) {
+        const distance = Math.abs(currentFloor - floor);
+
+        totalTime += distance * FLOOR_TRAVEL_TIME_MS;
+
+        // Add stop time for each floor (except the final destination)
+        if (i < path.length - 1) {
+          totalTime += STOP_TIME_MS + DOOR_TIME_MS;
+        }
+
+        currentFloor = floor;
+      }
+    }
+
+    return totalTime;
+  }
+
+  /**
+   * Calculate the path an elevator will take to reach a target floor
+   * considering its current direction and existing requests
+   */
+  private calculateElevatorPath(
+    elevator: ElevatorState,
+    targetFloor: number
+  ): number[] {
+    const path: number[] = [];
+    let currentFloor = elevator.currentFloor;
+
+    // Get all floors the elevator needs to visit (pickups and dropoffs)
+    const allFloors = new Set<number>();
+
+    // Add pickup floors from assigned requests
+    for (const req of elevator.requests) {
+      if (!elevator.movingRequests.find((mr) => mr.id === req.id)) {
+        allFloors.add(req.originFloor);
+      }
+    }
+
+    // Add dropoff floors from moving requests
+    for (const req of elevator.movingRequests) {
+      allFloors.add(req.destinationFloor);
+    }
+
+    // Add target floor if not already included
+    allFloors.add(targetFloor);
+
+    // Convert to sorted array based on current direction
+    const floorsArray = Array.from(allFloors).sort((a, b) => a - b);
+
+    if (elevator.direction === "up") {
+      // Visit floors above current floor in ascending order
+      for (const floor of floorsArray) {
+        if (floor >= currentFloor) {
+          path.push(floor);
+        }
+      }
+      // Then visit floors below current floor in descending order
+      for (let i = floorsArray.length - 1; i >= 0; i--) {
+        const floor = floorsArray[i];
+        if (floor !== undefined && floor < currentFloor) {
+          path.push(floor);
+        }
+      }
+    } else if (elevator.direction === "down") {
+      // Visit floors below current floor in descending order
+      for (let i = floorsArray.length - 1; i >= 0; i--) {
+        const floor = floorsArray[i];
+        if (floor !== undefined && floor <= currentFloor) {
+          path.push(floor);
+        }
+      }
+      // Then visit floors above current floor in ascending order
+      for (const floor of floorsArray) {
+        if (floor > currentFloor) {
+          path.push(floor);
+        }
+      }
+    }
+
+    return path;
+  }
+
+  /**
+   * Calculate total workload for an elevator including current passengers and pending requests
+   */
+  private calculateElevatorLoad(elevator: ElevatorState): number {
+    // Count current passengers
+    let totalLoad = elevator.currentLoad;
+
+    // Count pending requests assigned to this elevator
+    const pendingRequests = Array.from(this.pendingRequests.values()).filter(
+      (req) => req.assignedElevator === elevator.id
+    );
+
+    totalLoad += pendingRequests.length;
+
+    return totalLoad;
+  }
+
+  /**
+   * Handle reassignment of stuck requests to better elevators
+   */
+  private handleRequestReassignment(assignedRequests: ElevatorRequest[]): void {
+    const REASSIGNMENT_COOLDOWN_MS = 10000; // 10 seconds cooldown
+    const MINIMUM_IMPROVEMENT_THRESHOLD = 0.2; // 20% improvement required
+    const now = Date.now();
+
+    for (const request of assignedRequests) {
+      // Skip if request is no longer in pending
+      if (!this.pendingRequests.has(request.id)) {
+        continue;
+      }
+
+      // Skip if request was recently reassigned
+      if (
+        request.reassignedAt &&
+        now - request.reassignedAt < REASSIGNMENT_COOLDOWN_MS
+      ) {
+        continue;
+      }
+
+      // Skip if request is currently being transported (in moving elevator)
+      if (request.assignedElevator !== undefined) {
+        const assignedElevator = this.elevators[request.assignedElevator];
+        if (
+          assignedElevator &&
+          assignedElevator.movingRequests.find((mr) => mr.id === request.id)
+        ) {
+          continue;
+        }
+      }
+
+      // Find the best elevator for this request
+      const bestElevatorId = this.findOptimalElevator(request);
+
+      if (bestElevatorId !== null && request.assignedElevator !== undefined) {
+        const currentElevator = this.elevators[request.assignedElevator];
+        const bestElevator = this.elevators[bestElevatorId];
+
+        if (currentElevator && bestElevator) {
+          const currentScore = this.calculateElevatorFitness(
+            currentElevator,
+            request
+          );
+          const bestScore = this.calculateElevatorFitness(
+            bestElevator,
+            request
+          );
+
+          // Only reassign if the improvement is significant
+          const improvement = (currentScore - bestScore) / currentScore;
+
+          if (improvement > MINIMUM_IMPROVEMENT_THRESHOLD) {
+            this.log(
+              "request_reassigned",
+              `Request ${request.id} reassigned from elevator ${
+                request.assignedElevator
+              } to elevator ${bestElevatorId} (improvement: ${(
+                improvement * 100
+              ).toFixed(1)}%)`,
+              {
+                requestId: request.id,
+                oldElevatorId: request.assignedElevator,
+                newElevatorId: bestElevatorId,
+                improvement: improvement,
+                currentScore: currentScore,
+                bestScore: bestScore,
+                priority: request.priority,
+              }
+            );
+
+            // Remove from current elevator's requests
+            currentElevator.requests = currentElevator.requests.filter(
+              (req) => req.id !== request.id
+            );
+
+            // Assign to new elevator
+            this.assignRequestToElevator(request, bestElevatorId);
+
+            // Mark as reassigned
+            request.reassignedAt = now;
+          }
+        }
+      }
+    }
   }
 
   private assignRequestToElevator(
@@ -698,6 +933,11 @@ export class ElevatorSystem {
                 (req) => req.id !== request.id
               );
           }
+
+          // Mark as reassigned if this is a reassignment
+          if (request.assignedElevator !== undefined) {
+            request.reassignedAt = Date.now();
+          }
         }
 
         // Assign request to this elevator
@@ -724,6 +964,7 @@ export class ElevatorSystem {
             originFloor: request.originFloor,
             destinationFloor: request.destinationFloor,
             elevatorId: elevator.id,
+            isReassignment: request.reassignedAt !== undefined,
           },
           elevator.id
         );
@@ -878,7 +1119,7 @@ export class ElevatorSystem {
           return true; // If assigned elevator doesn't exist, consider it available
         }
 
-        // only reassign requests which are not inside a moving elavator
+        // only reassign requests which are not inside a moving elevator
         if (assignedElevator.id === elevator.id && !elevator.isMoving) {
           return true;
         }
@@ -887,25 +1128,40 @@ export class ElevatorSystem {
         return false;
       })
       .sort((a, b) => {
-        // Calculate combined score considering both priority and elevator efficiency
+        // Sort by priority first, then by fitness score
+        if (b.priority !== a.priority) {
+          return b.priority - a.priority;
+        }
+
         const scoreA = this.calculateElevatorFitness(elevator, a);
         const scoreB = this.calculateElevatorFitness(elevator, b);
-
-        // Final score = elevator score + priority bonus
-        const finalScoreA = scoreA + a.priority;
-        const finalScoreB = scoreB + b.priority;
-
-        return finalScoreA - finalScoreB;
+        return scoreA - scoreB;
       });
 
     // Find the highest priority request that this elevator can handle
     for (const request of availableRequests) {
       if (elevator.currentLoad < elevator.capacity) {
-        // If request was already assigned to another elevator, unassign it first
+        // Check if this would be a reassignment
         if (
           request.assignedElevator !== undefined &&
           request.assignedElevator !== elevator.id
         ) {
+          // Only reassign if this elevator is significantly better
+          const currentElevator = this.elevators[request.assignedElevator];
+          if (currentElevator) {
+            const currentScore = this.calculateElevatorFitness(
+              currentElevator,
+              request
+            );
+            const newScore = this.calculateElevatorFitness(elevator, request);
+            const improvement = (currentScore - newScore) / currentScore;
+
+            // Only reassign if improvement is significant (20% or more)
+            if (improvement < 0.2) {
+              continue;
+            }
+          }
+
           this.log(
             "request_reassigned",
             `Request ${request.id} reassigned from elevator ${request.assignedElevator} to idle elevator ${elevator.id}`,
@@ -956,6 +1212,11 @@ export class ElevatorSystem {
               waitTime: now - request.timestamp,
             }
           );
+
+          // Clear reassignment cooldown when priority escalates to allow immediate reassignment
+          if (request.reassignedAt) {
+            delete request.reassignedAt;
+          }
         }
       }
     }

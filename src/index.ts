@@ -63,10 +63,6 @@ const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => {
   console.log(`Elevator Simulation Server running on port ${PORT}`);
   console.log(`Socket.IO available at http://localhost:${PORT}`);
-  console.log(`Health check at http://localhost:${PORT}/health`);
-  console.log(
-    `All elevator operations are now handled via WebSocket connections`
-  );
 });
 
 process.on("SIGINT", () => {
